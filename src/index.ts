@@ -1,22 +1,211 @@
 #!/usr/bin/env node
 
 import { camelCase, pascalCase } from "change-case";
-import { hideBin } from "yargs/helpers";
-import { join } from "path";
 import { mkdir, rm, writeFile } from "fs/promises";
-import { sql, DatabasePool } from "slonik";
+import { join } from "path";
+import { DatabasePool, sql } from "slonik";
 import type { Arguments, Argv } from "yargs";
+import { hideBin } from "yargs/helpers";
 import yargs from "yargs/yargs";
 import { z } from "zod";
 
-import { createPool } from "./lib/createPool";
 import type { CreatePoolProps } from "./lib/createPool";
+import { createPool } from "./lib/createPool";
+
+interface PgRelationship {
+  con: number;
+  conname: string;
+
+  nsp: number;
+  nspname: string;
+
+  pnsp: number;
+  pnspname: string;
+
+  prel: number;
+  prelname: string;
+  preltype: number;
+  prelkind: string; // r (v?, p, f, c?)
+  prelnamespace: number;
+
+  patt: number;
+  pattname: string;
+  patttyp: number;
+  pattlen: number;
+  pattndims: number;
+  pattnotnull: "t" | "f";
+  patthasdef: "t" | "f";
+  patt_idx: number;
+
+  fnsp: number;
+  fnspname: string;
+
+  frel: number;
+  frelname: string;
+  freltype: number;
+  frelkind: string;
+  frelnamespace: number;
+
+  fatt: number;
+  fattname: string;
+  fatttyp: number;
+  fattlen: number;
+  fattndims: number;
+  fattnotnull: "t" | "f";
+  fatthasdef: "t" | "f";
+  fatt_idx: number;
+}
+
+interface PgColumn {
+  nsp: number;
+  nspname: string;
+
+  rel: number;
+  relname: string;
+  reltype: number;
+  relkind: string; // r (v?, p, f, c?)
+  relnamespace: number;
+
+  att: number;
+  attname: string;
+  atttyp: number;
+  attlen: number;
+  attndims: number;
+  attnotnull: "t" | "f";
+  atthasdef: "t" | "f";
+  att_idx: number;
+}
+
+const getPgColumns = async (schema: string, pool: DatabasePool) =>
+  pool.many(
+    sql<PgColumn>`
+  select
+    n.oid as nsp,
+    n.nspname,
+
+    r.oid as rel,
+    r.relname,
+    r.reltype,
+    r.relkind,
+    r.relnamespace,
+
+    a.attnum as att,
+    a.attname,
+    a.atttypid as atttyp,
+    a.attlen,
+    a.attndims,
+    a.attnotnull,
+    a.atthasdef
+
+  from pg_class r
+  left join pg_namespace n on (r.relnamespace=n.oid)
+  left join pg_attribute a on (r.oid=a.attrelid)
+  where nspname=${schema}
+  order by nspname, relname, att;`
+  );
+
+const getPgRelationships = (schema: string, pool: DatabasePool) =>
+  pool.many(
+    sql<PgRelationship>`
+
+    with pg_columns as (
+      select
+        n.oid as nsp,
+        n.nspname,
+    
+        r.oid as rel,
+        r.relname,
+        r.reltype,
+        r.relkind,
+        r.relnamespace,
+    
+        a.attnum as att,
+        a.attname,
+        a.atttypid as atttyp,
+        a.attlen,
+        a.attndims,
+        a.attnotnull,
+        a.atthasdef
+    
+      from pg_class r
+      left join pg_namespace n on (r.relnamespace=n.oid)
+      left join pg_attribute a on (r.oid=a.attrelid)
+      where nspname=${schema}
+      order by nspname, relname, att
+    )
+    
+    , pg_constraint_indices as (
+      select  
+        c.oid as con,
+        c.conname,
+    
+        n.oid as nsp,
+        n.nspname,
+    
+        generate_series(1, array_length(conkey, 1)) as conkey_idx
+    
+      from pg_constraint c
+      left join pg_namespace n on (c.connamespace=n.oid)
+      where contype='f'
+        and nspname=${schema}
+    )
+    
+    select 
+      i.con,
+      i.conname,
+    
+      i.nsp,
+      i.nspname,
+    
+      p.nsp as pnsp,
+      p.nspname as pnspname,
+    
+      p.rel as prel,
+      p.relname as prelname,
+      p.reltype as preltype,
+      p.relkind as prelkind,
+      p.relnamespace as prelnamespace,
+    
+      i.conkey_idx as patt_idx,
+      p.att as patt,
+      p.attname as pattname,
+      p.atttyp as patttyp,
+      p.attlen as pattlen,
+      p.attndims as pattndims,
+      p.attnotnull as pattnotnull,
+      p.atthasdef as patthasdef,
+    
+      f.nsp as fnsp,
+      f.nspname as fnspname,
+    
+      f.rel as frel,
+      f.relname as frelname,
+      f.reltype as freltype,
+      f.relkind as frelkind,
+      f.relnamespace as frelnamespace,
+    
+      i.conkey_idx as fatt_idx,
+      f.att as fatt,
+      f.attname as fattname,
+      f.atttyp as fatttyp,
+      f.attlen as fattlen,
+      f.attndims as fattndims,
+      f.attnotnull as fattnotnull,
+      f.atthasdef as fatthasdef
+    
+    from pg_constraint_indices i
+    left join pg_constraint c on (i.con=c.oid)
+    left join pg_columns p on (c.conrelid=p.rel and c.conkey[i.conkey_idx]=p.att)
+    left join pg_columns f on (c.confrelid=f.rel and c.confkey[i.conkey_idx]=f.att)
+    order by prelname, patt_idx;`
+  );
 
 /**
  * PGZod strategy validator.
  */
-const Strategy = z.union([z.literal("write"), z.literal("readwrite")]);
-type StrategyT = z.infer<typeof Strategy>;
+const STRATEGIES = ["read", "write", "update"] as const;
+const Strategies = z.array(z.enum(STRATEGIES));
+type StrategiesT = z.infer<typeof Strategies>;
 /**
  * Default command name.
  */
@@ -51,6 +240,7 @@ export type Options = {
    */
   strategy?: string;
 } & CreatePoolProps;
+
 /**
  * Yargs default command builder function.
  * Please refer to Yargs documentation to see how it works:
@@ -109,7 +299,8 @@ export const builder: (args: Argv<Record<string, unknown>>) => Argv<Options> = (
       },
       strategy: {
         type: "string",
-        choices: ["write", "readwrite"],
+        array: true,
+        choices: ["read", "write", "update"],
         default: "write",
       },
     })
@@ -128,7 +319,7 @@ export const handler = async (
     customZodTypes = [],
     output = join(__dirname, "."),
     schema = "public",
-    strategy = "write",
+    strategy: strategies = ["write"],
     pgdatabase,
     pghost,
     pgpassword,
@@ -146,6 +337,13 @@ export const handler = async (
     });
 
     console.info(`Fetching table list for schema: ${schema}`);
+
+    const columns = await getPgColumns(schema, pool);
+    console.log(JSON.stringify(columns[0]));
+
+    const relationships = await getPgRelationships(schema, pool);
+    console.log(JSON.stringify(relationships[0]));
+
     // Get the list of tables inside the schema.
     const tables = await pool.any(sql<InformationSchema>`
       SELECT table_name FROM information_schema.tables WHERE table_schema = ${schema} ORDER BY table_name`);
@@ -164,6 +362,8 @@ export const handler = async (
         JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
         WHERE n.nspname = ${schema}
         GROUP BY name;`);
+
+    console.log("custom enums: ", JSON.stringify(customEnums, null, 2));
     const customEnumsTypesMap = customEnums.reduce(
       (acc, { name, value }) => ({
         ...acc,
@@ -201,12 +401,14 @@ export const handler = async (
     await mkdir(output).catch(() => `output folder ${output} already exist`);
 
     // Run the correct strategy to generate the files.
-    runWithStrategy({
+    runWithStrategies({
       output,
       pool,
-      strategy: Strategy.parse(strategy),
+      strategies: Strategies.parse(strategies),
       tables,
       typesMap,
+      columns: [...columns],
+      relationships: [...relationships],
     });
   } catch (err) {
     console.error(err);
@@ -228,12 +430,15 @@ export const handler = async (
  * you have a `column` with a default value, including it on `writes` is optional, but on `read` it
  * will always be there.
  */
-async function runWithStrategy({
+
+async function runWithStrategies({
   output,
   pool,
   tables,
   typesMap,
-  strategy = "write",
+  columns,
+  relationships,
+  strategies = ["write"],
 }: StrategyOptions) {
   // Create the spinner
   console.info("Fetching tables metadata");
@@ -243,71 +448,135 @@ async function runWithStrategy({
 
   for (const table of tables.values()) {
     const { table_name } = table;
-    for (const filetype of strategy === "write"
-      ? ["write"]
-      : ["read", "write"]) {
-      // Set the current progress
-      console.info(`Fetching columns metadata for table: ${table_name}`);
-      const columns = await pool.any(sql<ColumnsInformation>`
+
+    // Set the current progress
+    console.info(`Fetching columns metadata for table: ${table_name}`);
+    const columnsIS = await pool.any(sql<ColumnsInformation>`
         SELECT is_generated, column_name, ordinal_position, column_default, is_nullable, data_type, udt_name
         FROM information_schema.columns
         WHERE table_name = ${table_name}
-        ORDER BY ordinal_position`);
+        ORDER BY ordinal_position
+      `);
 
-      const template = [];
-      // Remove editorconfig checks on auto-generated files.
-      template.push(`import { z } from 'zod';\n`);
+    console.log(relationships[0]);
+    console.log(columns[0]);
+    console.log(columnsIS);
 
-      // Add json parsing according to Zod documentation.
-      // https://github.com/colinhacks/zod#json-type
-      if (columns.some((column) => column.udt_name === "jsonb")) {
-        template.push(`type Literal = boolean | null | number | string;`);
-        template.push(
-          `type Json = Literal | { [key: string]: Json } | Json[];`
-        );
-        template.push(
-          `const literalSchema = z.union([z.string(), z.number(), z.boolean(), z.null()]);`
-        );
-        template.push(`const jsonSchema: z.ZodSchema<Json> = z.lazy(() =>`);
-        template.push(
-          `  z.union([literalSchema, z.array(jsonSchema), z.record(jsonSchema)])`
-        );
-        template.push(`);\n`);
-      }
+    const template = [];
+    // Remove editorconfig checks on auto-generated files.
+    template.push(`import { z } from 'zod';\n`);
 
-      const name = pascalCase(
-        strategy === "write" ? table_name : table_name + "_" + filetype
+    // Add json parsing according to Zod documentation.
+    // https://github.com/colinhacks/zod#json-type
+    if (columnsIS.some((column) => column.udt_name === "jsonb")) {
+      template.push(`type Literal = boolean | null | number | string;`);
+      template.push(`type Json = Literal | { [key: string]: Json } | Json[];`);
+      template.push(
+        `const literalSchema = z.union([z.string(), z.number(), z.boolean(), z.null()]);`
       );
-      template.push(`export const ${name} = z.object({`);
+      template.push(`const jsonSchema: z.ZodSchema<Json> = z.lazy(() =>`);
+      template.push(
+        `  z.union([literalSchema, z.array(jsonSchema), z.record(jsonSchema)])`
+      );
+      template.push(`);\n`);
+    }
+    const name = pascalCase(table_name);
+    template.push(`export const ${name}Fields = {`);
 
-      for (const column of columns) {
-        const name = column.column_name;
-        let line = `${name}: `;
+    for (const column of columnsIS) {
+      const name = column.column_name;
+      let line = `${name}: `;
 
-        const type = typesMap[column.udt_name];
-        line += type;
+      const type = typesMap[column.udt_name];
+      line += type;
 
-        const isNullable = column.is_nullable === "YES";
-        line += isNullable ? ".nullable().optional()" : "";
+      template.push(`  ${line},`);
+    }
 
-        const isOptional =
-          !isNullable &&
-          filetype === "write" &&
-          (column.is_generated === "ALWAYS" || column.column_default !== null);
-        line += isOptional ? ".optional()" : "";
+    template.push(`};\n`);
 
-        template.push(`  ${line},`);
-      }
+    /**
+     * Always create the types in the same order.
+     */
+    const strategiesSorted = STRATEGIES.filter((s) => strategies.includes(s));
+    for (const strategy of strategiesSorted) {
+      /**
+       *  column/op            |   read           | write             | update
+       *  -------------------------------------------------------------------------------
+       *  null                 |   nullable       | optional/nullable | optional/nullable
+       *  null     / default   |   nullable       | optional/nullable | optional/nullable
+       *  not null / default   |   -              | optional          | optional
+       *  not null             |   -              | -                 | optional
+       */
+
+      const nullableFields = columnsIS
+        .filter(({ is_nullable }) => is_nullable === "YES")
+        .map(({ column_name }) => column_name);
+
+      const optionalFields = columnsIS
+        .filter(({ is_nullable, is_generated, column_default }) => {
+          if (strategy === "read") return false;
+
+          if (strategy === "update") return true;
+
+          if (is_nullable === "YES") return true;
+
+          return is_generated === "ALWAYS" || column_default !== null;
+        })
+        .map(({ column_name }) => column_name);
+
+      const zname = (() => {
+        if (strategy === "read") return name;
+        return strategy === "write" ? `${name}Write` : `${name}Update`;
+      })();
+
+      template.push(`export const ${zname} = z.object({`);
+      template.push(`\t...${name}Fields,`);
+
+      columnsIS
+        .filter(
+          ({ is_nullable, column_name }) =>
+            is_nullable === "YES" || optionalFields.includes(column_name)
+        )
+        .map((column) => {
+          const nullable = column.is_nullable === "YES";
+          const optional = optionalFields.includes(column.column_name);
+
+          let modifiedColumn = `${name}Fields.${column.column_name}`;
+          if (nullable) modifiedColumn += ".nullable()";
+          if (optional) modifiedColumn += ".optional()";
+          return [column.column_name, modifiedColumn];
+        })
+        .forEach(([colname, typeModified]) =>
+          template.push(`\t${colname}: ${typeModified},`)
+        );
 
       template.push(`});\n`);
-      template.push(`export type ${name}T = z.infer<typeof ${name}>;\n`);
 
-      const file = camelCase(name);
-      await writeFile(join(output, `${file}.ts`), template.join("\n"));
-
-      index.push(`export type { ${name}T } from './${file}';`);
-      index.push(`export { ${name} } from './${file}';`);
+      console.log(nullableFields, optionalFields);
     }
+
+    const indexImports = [`${name}Fields`];
+    const indexImportsTypes = [];
+    for (const strategy of strategiesSorted) {
+      const zname = (() => {
+        if (strategy === "read") return name;
+        return strategy === "write" ? `${name}Write` : `${name}Update`;
+      })();
+      template.push(`export type ${zname}T = z.infer<typeof ${zname}>;\n`);
+
+      indexImports.push(zname);
+      indexImportsTypes.push(`${zname}T`);
+    }
+
+    const file = camelCase(name);
+    await writeFile(join(output, `${file}.ts`), template.join("\n"));
+
+    const indexImportTypes = indexImportsTypes.join(", ");
+    const indexImport = indexImports.join(", ");
+
+    index.push(`export type { ${indexImportTypes} } from './${file}';`);
+    index.push(`export { ${indexImport} } from './${file}';`);
   }
 
   console.info("Writing index file");
@@ -335,6 +604,7 @@ function createTypesMap(customZodTypes: Record<string, string>) {
     numeric: `z.number()`,
     text: `z.string()`,
     // TODO: Find a better way to handle dates.
+    timestamp: `z.string()`,
     timestamptz: `z.string()`,
     uuid: "z.string().uuid()",
     varchar: `z.string()`,
@@ -387,9 +657,11 @@ type ColumnsInformation = {
 type StrategyOptions = {
   output: string;
   pool: DatabasePool;
-  strategy?: StrategyT;
+  strategies?: StrategiesT;
   tables: readonly InformationSchema[];
   typesMap: { [key: string]: string };
+  columns: PgColumn[];
+  relationships: PgRelationship[];
 };
 // =================
 // Standalone Module
