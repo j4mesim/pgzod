@@ -481,7 +481,7 @@ async function runWithStrategies({
       template.push(`);\n`);
     }
     const name = pascalCase(table_name);
-    template.push(`export const ${name}Fields = {`);
+    template.push(`export const z${name}Fields = {`);
 
     for (const column of columnsIS) {
       const name = column.column_name;
@@ -530,8 +530,8 @@ async function runWithStrategies({
         return strategy === "write" ? `${name}Write` : `${name}Update`;
       })();
 
-      template.push(`export const ${zname} = z.object({`);
-      template.push(`\t...${name}Fields,`);
+      template.push(`export const z${zname} = z.object({`);
+      template.push(`\t...z${name}Fields,`);
 
       columnsIS
         .filter(
@@ -542,7 +542,7 @@ async function runWithStrategies({
           const nullable = column.is_nullable === "YES";
           const optional = optionalFields.includes(column.column_name);
 
-          let modifiedColumn = `${name}Fields.${column.column_name}`;
+          let modifiedColumn = `z${name}Fields.${column.column_name}`;
           if (nullable) modifiedColumn += ".nullable()";
           if (optional) modifiedColumn += ".optional()";
           return [column.column_name, modifiedColumn];
@@ -556,17 +556,17 @@ async function runWithStrategies({
       console.log(nullableFields, optionalFields);
     }
 
-    const indexImports = [`${name}Fields`];
+    const indexImports = [`z${name}Fields`];
     const indexImportsTypes = [];
     for (const strategy of strategiesSorted) {
       const zname = (() => {
         if (strategy === "read") return name;
         return strategy === "write" ? `${name}Write` : `${name}Update`;
       })();
-      template.push(`export type ${zname}T = z.infer<typeof ${zname}>;\n`);
+      template.push(`export type ${zname} = z.infer<typeof z${zname}>;\n`);
 
-      indexImports.push(zname);
-      indexImportsTypes.push(`${zname}T`);
+      indexImports.push(`z${zname}`);
+      indexImportsTypes.push(zname);
     }
 
     const file = camelCase(name);
