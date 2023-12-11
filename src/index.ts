@@ -481,7 +481,7 @@ async function runWithStrategies({
       template.push(`);\n`);
     }
     const name = pascalCase(table_name);
-    template.push(`export const z${name}FieldsStrict = {`);
+    template.push(`export const z${name}RecordStrict = {`);
 
     for (const column of columnsIS) {
       const name = column.column_name;
@@ -530,8 +530,24 @@ async function runWithStrategies({
         return strategy === "write" ? `${name}Write` : `${name}Update`;
       })();
 
-      template.push(`export const z${zname}Fields = {`);
-      template.push(`\t...z${name}FieldsStrict,`);
+      template.push(
+        nullableFields.length
+          ? `export type ${zname}NullableFields = ${nullableFields
+              .map((f) => `'${f}'`)
+              .join(" | ")};\n`
+          : `export type ${zname}NullableFields = never;\n`
+      );
+
+      template.push(
+        optionalFields.length
+          ? `export type ${zname}OptionalFields = ${optionalFields
+              .map((f) => `'${f}'`)
+              .join(" | ")};\n`
+          : `export type ${zname}OptionalFields = never;\n`
+      );
+
+      template.push(`export const z${zname}Record = {`);
+      template.push(`\t...z${name}RecordStrict,`);
 
       columnsIS
         .filter(
@@ -542,7 +558,7 @@ async function runWithStrategies({
           const nullable = column.is_nullable === "YES";
           const optional = optionalFields.includes(column.column_name);
 
-          let modifiedColumn = `z${name}FieldsStrict.${column.column_name}`;
+          let modifiedColumn = `z${name}RecordStrict.${column.column_name}`;
           if (nullable) modifiedColumn += ".nullable()";
           if (optional) modifiedColumn += ".optional()";
           return [column.column_name, modifiedColumn];
@@ -555,14 +571,15 @@ async function runWithStrategies({
 
       console.log(nullableFields, optionalFields);
     }
-    const indexImports = [`z${name}FieldsStrict`];
+
+    const indexImports = [`z${name}RecordStrict`];
     for (const strategy of strategiesSorted) {
       const zname = (() => {
         if (strategy === "read") return name;
         return strategy === "write" ? `${name}Write` : `${name}Update`;
       })();
-      template.push(`export const z${zname} = z.object(z${zname}Fields);\n`);
-      indexImports.push(`z${zname}Fields`);
+      template.push(`export const z${zname} = z.object(z${zname}Record);\n`);
+      indexImports.push(`z${zname}Record`);
     }
 
     const indexImportsTypes = [];
