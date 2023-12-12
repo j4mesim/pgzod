@@ -66,6 +66,7 @@ interface PgColumn {
   relkind: string; // r (v?, p, f, c?)
   relnamespace: number;
 
+  att_idx: number;
   att: number;
   attname: string;
   atttyp: number;
@@ -73,7 +74,30 @@ interface PgColumn {
   attndims: number;
   attnotnull: "t" | "f";
   atthasdef: "t" | "f";
+}
+
+interface PgConstraint {
+  con: number;
+  conname: string;
+  contype: "p" | "u" | "c" | "x";
+
+  nsp: number;
+  nspname: string;
+
+  rel: number;
+  relname: string;
+  reltype: number;
+  relkind: string; // r (v?, p, f, c?)
+  relnamespace: number;
+
   att_idx: number;
+  att: number | null;
+  attname: string | null;
+  atttyp: number | null;
+  attlen: number | null;
+  attndims: number | null;
+  attnotnull: "t" | "f" | null;
+  atthasdef: "t" | "f" | null;
 }
 
 const getPgColumns = async (schema: string, pool: DatabasePool) =>
@@ -104,10 +128,58 @@ const getPgColumns = async (schema: string, pool: DatabasePool) =>
   order by nspname, relname, att;`
   );
 
+const getPgConstraints = async (schema: string, pool: DatabasePool) =>
+  pool.many(
+    sql<PgConstraint>`
+    with pg_constraint_indices as (
+      select  
+        c.oid as con,
+        c.conname,
+        c.contype,
+
+        c.conrelid,
+        c.conkey,
+    
+        generate_series(1, array_length(conkey, 1)) as conkey_idx
+    
+      from pg_constraint c
+      where contype!='f'
+    )
+
+    select
+      c.con,
+      c.conname,
+      c.contype,
+      
+      n.oid as nsp,
+      n.nspname,
+
+      r.oid as rel,
+      r.relname,
+      r.reltype,
+      r.relkind,
+      r.relnamespace,
+
+      c.conkey_idx as att_idx,
+      a.attnum as att,
+      a.attname,
+      a.atttypid as atttyp,
+      a.attlen,
+      a.attndims,
+      a.attnotnull,
+      a.atthasdef
+
+    from pg_constraint_indices c
+    left join pg_class r on (r.oid=c.conrelid)
+    left join pg_attribute a on (r.oid=a.attrelid and c.conkey[c.conkey_idx]=a.attnum)
+    left join pg_namespace n on (r.relnamespace=n.oid)
+    where n.nspname=${schema}
+    order by nspname, relname, att;`
+  );
+
 const getPgRelationships = (schema: string, pool: DatabasePool) =>
   pool.many(
     sql<PgRelationship>`
-
     with pg_columns as (
       select
         n.oid as nsp,
@@ -341,6 +413,9 @@ export const handler = async (
     const columns = await getPgColumns(schema, pool);
     console.log(JSON.stringify(columns[0]));
 
+    const constraints = await getPgConstraints(schema, pool);
+    console.log(JSON.stringify(constraints[0]));
+
     const relationships = await getPgRelationships(schema, pool);
     console.log(JSON.stringify(relationships[0]));
 
@@ -407,6 +482,7 @@ export const handler = async (
       strategies: Strategies.parse(strategies),
       tables,
       typesMap,
+      constraints: [...constraints],
       columns: [...columns],
       relationships: [...relationships],
     });
@@ -437,6 +513,7 @@ async function runWithStrategies({
   tables,
   typesMap,
   columns,
+  constraints,
   relationships,
   strategies = ["write"],
 }: StrategyOptions) {
@@ -480,6 +557,7 @@ async function runWithStrategies({
       );
       template.push(`);\n`);
     }
+
     const name = pascalCase(table_name);
     template.push(`export const z${name}RecordStrict = {`);
 
@@ -495,6 +573,23 @@ async function runWithStrategies({
 
     template.push(`};\n`);
 
+    const nullableFields = columnsIS
+      .filter(({ is_nullable }) => is_nullable === "YES")
+      .map(({ column_name }) => column_name);
+
+    const getOptionalFields = (strat: StrategiesT[number]) =>
+      columnsIS
+        .filter(({ is_nullable, is_generated, column_default }) => {
+          if (strat === "read") return false;
+
+          if (strat === "update") return true;
+
+          if (is_nullable === "YES") return true;
+
+          return is_generated === "ALWAYS" || column_default !== null;
+        })
+        .map(({ column_name }) => column_name);
+
     /**
      * Always create the types in the same order.
      */
@@ -509,21 +604,7 @@ async function runWithStrategies({
        *  not null             |   -              | -                 | optional
        */
 
-      const nullableFields = columnsIS
-        .filter(({ is_nullable }) => is_nullable === "YES")
-        .map(({ column_name }) => column_name);
-
-      const optionalFields = columnsIS
-        .filter(({ is_nullable, is_generated, column_default }) => {
-          if (strategy === "read") return false;
-
-          if (strategy === "update") return true;
-
-          if (is_nullable === "YES") return true;
-
-          return is_generated === "ALWAYS" || column_default !== null;
-        })
-        .map(({ column_name }) => column_name);
+      const optionalFields = getOptionalFields(strategy);
 
       const zname = (() => {
         if (strategy === "read") return name;
@@ -572,6 +653,10 @@ async function runWithStrategies({
       console.log(nullableFields, optionalFields);
     }
 
+    template.push(
+      `export const z${name}Strict = z.object(z${name}RecordStrict);\n`
+    );
+
     const indexImports = [`z${name}RecordStrict`];
     for (const strategy of strategiesSorted) {
       const zname = (() => {
@@ -582,6 +667,9 @@ async function runWithStrategies({
       indexImports.push(`z${zname}Record`);
     }
 
+    template.push(
+      `export type ${name}Strict = z.infer<typeof z${name}Strict>;\n`
+    );
     const indexImportsTypes = [];
     for (const strategy of strategiesSorted) {
       const zname = (() => {
@@ -594,6 +682,84 @@ async function runWithStrategies({
       indexImportsTypes.push(zname);
     }
 
+    const primaryKeys = constraints
+      .filter(({ contype, relname }) => {
+        return contype === "p" && relname === table_name;
+      })
+      .map(({ attname }) => attname);
+
+    if (primaryKeys.length > 1)
+      throw new Error(
+        `Table ${table_name} has primary keys: ${primaryKeys.join(
+          ", "
+        )}. Does not support composite primary keys`
+      );
+
+    const primaryKey = primaryKeys[0] ?? `null`;
+
+    const foreignKeys = relationships
+      .filter(({ prelname }) => prelname === table_name)
+      .map(({ frelname, pattname, fattname, conname }) => ({
+        constraint_name: conname,
+        table: frelname,
+        pkey: pattname,
+        fkey: fattname,
+      }));
+
+    if (
+      foreignKeys.length >
+      new Set(foreignKeys.map(({ constraint_name }) => constraint_name)).size
+    )
+      throw new Error(
+        "Duplicate constraint name, does not support relationships foreign keys"
+      );
+
+    const columnsJnt = columnsIS
+      .map(({ column_name }) => `"${column_name}"`)
+      .join(", ");
+
+    /**
+     * Write a const that provides just const objects.
+     */
+    template.push(`export const ${table_name} = {`);
+    template.push(`  columns: [${columnsJnt}],`);
+    template.push(`  primaryKey: "${primaryKey}",`);
+    template.push(`  foreignKeys: {`);
+    foreignKeys.forEach(({ table, pkey, fkey }) => {
+      template.push(`    ${pkey}: { table: "${table}", column: "${fkey}" },`);
+    });
+    template.push(`  },`);
+    template.push(`  ops: {`);
+    template.push(`    strict: {`);
+    template.push(`      record: z${name}RecordStrict,`);
+    template.push(`      z: z${name}Strict,`);
+    template.push(`      $type: null as unknown as ${name}Strict,`);
+    template.push(`    },`);
+
+    const nullableFieldsJnt = nullableFields
+      .map((field) => `"${field}"`)
+      .join(", ");
+    strategiesSorted.forEach((strategy) => {
+      const zname = (() => {
+        if (strategy === "read") return name;
+        return strategy === "write" ? `${name}Write` : `${name}Update`;
+      })();
+
+      const optionalFieldsJnt = getOptionalFields(strategy)
+        .map((field) => `"${field}"`)
+        .join(", ");
+
+      template.push(`    ${strategy}: {`);
+      template.push(`      nullable: [${optionalFieldsJnt}],`);
+      template.push(`      optional: [${nullableFieldsJnt}],`);
+      template.push(`      record: z${zname}Record,`);
+      template.push(`      z: z${zname},`);
+      template.push(`      $type: null as unknown as ${zname},`);
+      template.push(`    },`);
+    });
+    template.push(`  },`);
+    template.push(`} as const;`);
+
     const file = camelCase(name);
     await writeFile(join(output, `${file}.ts`), template.join("\n"));
 
@@ -601,7 +767,7 @@ async function runWithStrategies({
     const indexImport = indexImports.join(", ");
 
     index.push(`export type { ${indexImportTypes} } from './${file}';`);
-    index.push(`export { ${indexImport} } from './${file}';`);
+    index.push(`export { ${table_name}, ${indexImport} } from './${file}';`);
   }
 
   console.info("Writing index file");
@@ -609,6 +775,7 @@ async function runWithStrategies({
 
   console.info("Done");
 }
+
 /**
  * Returns a PostgreSQL to Zod types map.
  * @param type - PostgreSQL data type.
@@ -686,6 +853,7 @@ type StrategyOptions = {
   tables: readonly InformationSchema[];
   typesMap: { [key: string]: string };
   columns: PgColumn[];
+  constraints: PgConstraint[];
   relationships: PgRelationship[];
 };
 // =================
