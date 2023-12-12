@@ -768,7 +768,14 @@ async function runWithStrategies({
 
     index.push(`export type { ${indexImportTypes} } from './${file}';`);
     index.push(`export { ${table_name}, ${indexImport} } from './${file}';`);
+    index.push(`import { ${table_name} } from './${file}';\n`);
   }
+
+  index.push(`export const tables = {`);
+  tables.forEach(({ table_name }) => {
+    index.push(`  ${table_name},`);
+  });
+  index.push(`};`);
 
   console.info("Writing index file");
   await writeFile(join(output, `index.ts`), [...index, "\n"].join("\n"));
