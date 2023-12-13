@@ -573,21 +573,38 @@ async function runWithStrategies({
 
     template.push(`};\n`);
 
+    const primaryKeys = constraints
+      .filter(({ contype, relname }) => {
+        return contype === "p" && relname === table_name;
+      })
+      .map(({ attname }) => attname);
+
+    if (primaryKeys.length > 1)
+      throw new Error(
+        `Table ${table_name} has primary keys: ${primaryKeys.join(
+          ", "
+        )}. Does not support composite primary keys`
+      );
+
+    const primaryKey = primaryKeys[0] ?? `null`;
+
     const nullableFields = columnsIS
       .filter(({ is_nullable }) => is_nullable === "YES")
       .map(({ column_name }) => column_name);
 
     const getOptionalFields = (strat: StrategiesT[number]) =>
       columnsIS
-        .filter(({ is_nullable, is_generated, column_default }) => {
-          if (strat === "read") return false;
+        .filter(
+          ({ column_name, is_nullable, is_generated, column_default }) => {
+            if (strat === "read") return false;
 
-          if (strat === "update") return true;
+            if (strat === "update") return column_name !== primaryKey;
 
-          if (is_nullable === "YES") return true;
+            if (is_nullable === "YES") return true;
 
-          return is_generated === "ALWAYS" || column_default !== null;
-        })
+            return is_generated === "ALWAYS" || column_default !== null;
+          }
+        )
         .map(({ column_name }) => column_name);
 
     /**
@@ -602,8 +619,8 @@ async function runWithStrategies({
        *  null     / default   |   nullable       | optional/nullable | optional/nullable
        *  not null / default   |   -              | optional          | optional
        *  not null             |   -              | -                 | optional
+       *  primary key          |   -              | optional          | -
        */
-
       const optionalFields = getOptionalFields(strategy);
 
       const zname = (() => {
@@ -682,21 +699,6 @@ async function runWithStrategies({
       indexImportsTypes.push(zname);
     }
 
-    const primaryKeys = constraints
-      .filter(({ contype, relname }) => {
-        return contype === "p" && relname === table_name;
-      })
-      .map(({ attname }) => attname);
-
-    if (primaryKeys.length > 1)
-      throw new Error(
-        `Table ${table_name} has primary keys: ${primaryKeys.join(
-          ", "
-        )}. Does not support composite primary keys`
-      );
-
-    const primaryKey = primaryKeys[0] ?? `null`;
-
     const foreignKeys = relationships
       .filter(({ prelname }) => prelname === table_name)
       .map(({ frelname, pattname, fattname, conname }) => ({
@@ -750,15 +752,27 @@ async function runWithStrategies({
         .join(", ");
 
       template.push(`    ${strategy}: {`);
-      template.push(`      nullable: [${optionalFieldsJnt}],`);
-      template.push(`      optional: [${nullableFieldsJnt}],`);
+      template.push(`      nullable: [${nullableFieldsJnt}],`);
+      template.push(`      optional: [${optionalFieldsJnt}],`);
       template.push(`      record: z${zname}Record,`);
       template.push(`      z: z${zname},`);
       template.push(`      $type: null as unknown as ${zname},`);
       template.push(`    },`);
     });
     template.push(`  },`);
-    template.push(`} as const;`);
+    template.push(`} as const;\n`);
+
+    template.push(`export type ${name}Types = {`);
+    template.push(`  strict: ${name}Strict;`);
+    strategiesSorted.forEach((strat) => {
+      const zname = (() => {
+        if (strat === "read") return name;
+        return strat === "write" ? `${name}Write` : `${name}Update`;
+      })();
+
+      template.push(`  ${strat}: ${zname};`);
+    });
+    template.push(`};`);
 
     const file = camelCase(name);
     await writeFile(join(output, `${file}.ts`), template.join("\n"));
@@ -766,14 +780,23 @@ async function runWithStrategies({
     const indexImportTypes = indexImportsTypes.join(", ");
     const indexImport = indexImports.join(", ");
 
-    index.push(`export type { ${indexImportTypes} } from './${file}';`);
+    index.push(
+      `export type { ${indexImportTypes}, ${name}Types } from './${file}';`
+    );
     index.push(`export { ${table_name}, ${indexImport} } from './${file}';`);
+    index.push(`import type { ${name}Types } from './${file}';\n`);
     index.push(`import { ${table_name} } from './${file}';\n`);
   }
 
   index.push(`export const tables = {`);
   tables.forEach(({ table_name }) => {
     index.push(`  ${table_name},`);
+  });
+  index.push(`};`);
+
+  index.push(`export type TableTypes = {`);
+  tables.forEach(({ table_name }) => {
+    index.push(`  ${table_name}: ${pascalCase(table_name)}Types,`);
   });
   index.push(`};`);
 
