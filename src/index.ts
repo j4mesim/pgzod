@@ -826,8 +826,8 @@ function createTypesMap(customZodTypes: Record<string, string>) {
     numeric: `z.number()`,
     text: `z.string()`,
     // TODO: Find a better way to handle dates.
-    timestamp: `z.string()`,
-    timestamptz: `z.string()`,
+    timestamp: `z.date()`,
+    timestamptz: `z.date()`,
     uuid: "z.string().uuid()",
     varchar: `z.string()`,
     interval: `z.number()`,
