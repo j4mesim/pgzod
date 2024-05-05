@@ -784,7 +784,7 @@ async function runWithStrategies({
       `export type { ${indexImportTypes}, ${name}Types } from './${file}';`
     );
     index.push(`export { ${table_name}, ${indexImport} } from './${file}';`);
-    index.push(`import type { ${name}Types } from './${file}';\n`);
+    index.push(`import type { ${name}Types } from './${file}';`);
     index.push(`import { ${table_name} } from './${file}';\n`);
   }
 
@@ -792,7 +792,7 @@ async function runWithStrategies({
   tables.forEach(({ table_name }) => {
     index.push(`  ${table_name},`);
   });
-  index.push(`};`);
+  index.push(`};\n`);
 
   index.push(`export type TableTypes = {`);
   tables.forEach(({ table_name }) => {
