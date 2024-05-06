@@ -781,11 +781,11 @@ async function runWithStrategies({
     const indexImport = indexImports.join(", ");
 
     index.push(
-      `export type { ${indexImportTypes}, ${name}Types } from './${file}';`
+      `export type { ${indexImportTypes}, ${name}Types } from './${file}.js';`
     );
-    index.push(`export { ${table_name}, ${indexImport} } from './${file}';`);
-    index.push(`import type { ${name}Types } from './${file}';`);
-    index.push(`import { ${table_name} } from './${file}';\n`);
+    index.push(`export { ${table_name}, ${indexImport} } from './${file}.js';`);
+    index.push(`import type { ${name}Types } from './${file}.js';`);
+    index.push(`import { ${table_name} } from './${file}.js';\n`);
   }
 
   index.push(`export const tables = {`);
