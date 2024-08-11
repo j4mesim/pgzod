@@ -458,6 +458,10 @@ export const handler = async (
 
     const customZodTypesMap = customZodTypes.reduce((acc, pair) => {
       const [postgresType, zodValidator] = pair.split("=");
+      if (postgresType === undefined)
+        throw new Error(
+          `Something went wrong build zod types for map: ${pair} `
+        );
       return { ...acc, [postgresType]: zodValidator };
     }, {});
 
@@ -579,15 +583,6 @@ async function runWithStrategies({
       })
       .map(({ attname }) => attname);
 
-    if (primaryKeys.length > 1)
-      throw new Error(
-        `Table ${table_name} has primary keys: ${primaryKeys.join(
-          ", "
-        )}. Does not support composite primary keys`
-      );
-
-    const primaryKey = primaryKeys[0] ?? `null`;
-
     const nullableFields = columnsIS
       .filter(({ is_nullable }) => is_nullable === "YES")
       .map(({ column_name }) => column_name);
@@ -598,7 +593,7 @@ async function runWithStrategies({
           ({ column_name, is_nullable, is_generated, column_default }) => {
             if (strat === "read") return false;
 
-            if (strat === "update") return column_name !== primaryKey;
+            if (strat === "update") return !primaryKeys.includes(column_name);
 
             if (is_nullable === "YES") return true;
 
@@ -699,7 +694,7 @@ async function runWithStrategies({
       indexImportsTypes.push(zname);
     }
 
-    const foreignKeys = relationships
+    const foreignKeysByColumn = relationships
       .filter(({ prelname }) => prelname === table_name)
       .map(({ frelname, pattname, fattname, conname }) => ({
         constraint_name: conname,
@@ -707,14 +702,22 @@ async function runWithStrategies({
         pkey: pattname,
         fkey: fattname,
       }));
+    foreignKeysByColumn.sort((a, b) => {
+      if (a.constraint_name > b.constraint_name) return 1;
+      return a.constraint_name < b.constraint_name ? -1 : 0;
+    });
 
-    if (
-      foreignKeys.length >
-      new Set(foreignKeys.map(({ constraint_name }) => constraint_name)).size
-    )
-      throw new Error(
-        "Duplicate constraint name, does not support relationships foreign keys"
-      );
+    // group
+    const foreignKeysByConstraint = foreignKeysByColumn.reduce(
+      (agg, foreignKeyCol) => ({
+        ...agg,
+        [foreignKeyCol.constraint_name]: [
+          ...(agg[foreignKeyCol.constraint_name] ?? []),
+          foreignKeyCol,
+        ],
+      }),
+      {} as Record<string, typeof foreignKeysByColumn>
+    );
 
     const columnsJnt = columnsIS
       .map(({ column_name }) => `"${column_name}"`)
@@ -725,12 +728,30 @@ async function runWithStrategies({
      */
     template.push(`export const ${table_name} = {`);
     template.push(`  columns: [${columnsJnt}],`);
-    template.push(`  primaryKey: "${primaryKey}",`);
-    template.push(`  foreignKeys: {`);
-    foreignKeys.forEach(({ table, pkey, fkey }) => {
-      template.push(`    ${pkey}: { table: "${table}", column: "${fkey}" },`);
-    });
-    template.push(`  },`);
+
+    const primarKeysJnt = primaryKeys.map((pk) => `"${pk}"`).join(", ");
+    template.push(`  primaryKeys: [${primarKeysJnt}],`);
+
+    if (foreignKeysByColumn.length) {
+      template.push(`  foreignKeys: {`);
+      Object.entries(foreignKeysByConstraint).forEach(
+        ([constraintName, foreignKeysConstraint]) => {
+          foreignKeysConstraint.sort((a, b) => {
+            if (a.pkey > b.pkey) return 1;
+            if (a.pkey < b.pkey) return -1;
+            return 0;
+          });
+          template.push(`    ${constraintName}: {`);
+          foreignKeysConstraint.map(({ table, pkey, fkey }) => {
+            template.push(
+              `      ${pkey}: { table: "${table}", key: "${fkey}" },`
+            );
+          });
+          template.push(`    },`);
+        }
+      );
+      template.push(`  },`);
+    } else template.push(`  foreignKeys: {},`);
     template.push(`  ops: {`);
     template.push(`    strict: {`);
     template.push(`      record: z${name}RecordStrict,`);
