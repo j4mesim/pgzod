@@ -372,7 +372,7 @@ export const builder: (args: Argv<Record<string, unknown>>) => Argv<Options> = (
       strategy: {
         type: "string",
         array: true,
-        choices: ["read", "write", "update"],
+        choices: STRATEGIES,
         default: "write",
       },
     })
@@ -679,6 +679,21 @@ async function runWithStrategies({
       indexImports.push(`z${zname}Record`);
     }
 
+    // Primary zNamePrimary.
+    const zPrimary: string[] = [];
+    if (primaryKeys.length) {
+      zPrimary.push(`export const z${name}Primary = z.object({`);
+      columnsIS.forEach((column) => {
+        if (!primaryKeys.includes(column.column_name)) return;
+        const type = typesMap[column.udt_name];
+        zPrimary.push(`  ${column.column_name}: ${type},`);
+      });
+      zPrimary.push(`});`);
+    } else zPrimary.push(`export const z${name}Primary = z.object({});`);
+    zPrimary.push("");
+
+    template.push(zPrimary.join("\n"));
+
     template.push(
       `export type ${name}Strict = z.infer<typeof z${name}Strict>;\n`
     );
@@ -693,6 +708,9 @@ async function runWithStrategies({
       indexImports.push(`z${zname}`);
       indexImportsTypes.push(zname);
     }
+    template.push(
+      `export type ${name}Primary = z.infer<typeof z${name}Primary>;\n`
+    );
 
     const foreignKeysByColumn = relationships
       .filter(({ prelname }) => prelname === table_name)
@@ -729,8 +747,9 @@ async function runWithStrategies({
     template.push(`export const ${table_name} = {`);
     template.push(`  columns: [${columnsJnt}],`);
 
-    const primarKeysJnt = primaryKeys.map((pk) => `"${pk}"`).join(", ");
-    template.push(`  primaryKeys: [${primarKeysJnt}],`);
+    const primaryKeysJnt = primaryKeys.map((pk) => `"${pk}"`).join(", ");
+    template.push(`  primaryKeys: [${primaryKeysJnt}],`);
+    template.push(`  primary: z${name}Primary,`);
 
     if (foreignKeysByColumn.length) {
       template.push(`  foreignKeys: {`);
@@ -793,6 +812,7 @@ async function runWithStrategies({
 
       template.push(`  ${strat}: ${zname};`);
     });
+    template.push(`  primary: ${name}Primary;`);
     template.push(`};`);
 
     const file = camelCase(name);
@@ -802,9 +822,11 @@ async function runWithStrategies({
     const indexImport = indexImports.join(", ");
 
     index.push(
-      `export type { ${indexImportTypes}, ${name}Types } from './${file}.js';`
+      `export type { ${indexImportTypes}, ${name}Primary, ${name}Types, } from './${file}.js';`
     );
-    index.push(`export { ${table_name}, ${indexImport} } from './${file}.js';`);
+    index.push(
+      `export { ${table_name}, ${indexImport}, z${name}Primary } from './${file}.js';`
+    );
     index.push(`import type { ${name}Types } from './${file}.js';`);
     index.push(`import { ${table_name} } from './${file}.js';\n`);
   }
