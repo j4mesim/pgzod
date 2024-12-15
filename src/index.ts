@@ -8,7 +8,6 @@ import type { Arguments, Argv } from "yargs";
 import { hideBin } from "yargs/helpers";
 import yargs from "yargs/yargs";
 import { z } from "zod";
-
 import type { CreatePoolProps } from "./lib/createPool";
 import { createPool } from "./lib/createPool";
 
@@ -553,12 +552,10 @@ async function runWithStrategies({
       template.push(`type Literal = boolean | null | number | string;`);
       template.push(`type Json = Literal | { [key: string]: Json } | Json[];`);
       template.push(
-        `const literalSchema = z.union([z.string(), z.number(), z.boolean(), z.null()]);`
+        `const zLiteral = z.union([z.string(), z.number(), z.boolean(), z.null()]);`
       );
-      template.push(`const jsonSchema: z.ZodSchema<Json> = z.lazy(() =>`);
-      template.push(
-        `  z.union([literalSchema, z.array(jsonSchema), z.record(jsonSchema)])`
-      );
+      template.push(`const zJson: z.ZodSchema<Json> = z.lazy(() =>`);
+      template.push(`  z.union([zLiteral, z.array(zJson), z.record(zJson)])`);
       template.push(`);\n`);
     }
 
@@ -865,7 +862,7 @@ function createTypesMap(customZodTypes: Record<string, string>) {
     date: `z.string()`,
     float8: `z.number()`,
     int4: `z.number().int()`,
-    jsonb: `jsonSchema`,
+    jsonb: `zJson`,
     numeric: `z.number()`,
     text: `z.string()`,
     // TODO: Find a better way to handle dates.
