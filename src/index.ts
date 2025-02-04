@@ -862,7 +862,8 @@ function createTypesMap(customZodTypes: Record<string, string>) {
     date: `z.string()`,
     float8: `z.number()`,
     int4: `z.number().int()`,
-    jsonb: `zJson`,
+    int8: `z.bigint()`,
+		jsonb: `zJson`,
     numeric: `z.number()`,
     text: `z.string()`,
     // TODO: Find a better way to handle dates.
