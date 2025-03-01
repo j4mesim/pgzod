@@ -863,13 +863,14 @@ function createTypesMap(customZodTypes: Record<string, string>) {
     float8: `z.number()`,
     int4: `z.number().int()`,
     int8: `z.bigint()`,
-		jsonb: `zJson`,
+    jsonb: `zJson`,
     numeric: `z.number()`,
     text: `z.string()`,
     // TODO: Find a better way to handle dates.
     timestamp: `z.date()`,
     timestamptz: `z.date()`,
     uuid: "z.string().uuid()",
+    _uuid: "z.string().uuid()",
     varchar: `z.string()`,
     interval: `z.number()`,
   };
