@@ -870,6 +870,7 @@ function createTypesMap(customZodTypes: Record<string, string>) {
     timestamp: `z.date()`,
     timestamptz: `z.date()`,
     uuid: "z.string().uuid()",
+    _uuid: "z.string().uuid()",
     varchar: `z.string()`,
     interval: `z.number()`,
   };
