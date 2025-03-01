@@ -866,8 +866,14 @@ function createTypesMap(customZodTypes: Record<string, string>) {
     date: `z.string()`,
     float8: `z.number()`,
     _float8: `z.number()`,
+    oid: `z.number().int()`,
+    int1: `z.number().int()`,
+    int2: `z.number().int()`,
     int4: `z.number().int()`,
     int8: `z.bigint()`,
+    _oid: `z.number().int()`,
+    _int1: `z.number().int()`,
+    _int2: `z.number().int()`,
     _int4: `z.number().int()`,
     _int8: `z.bigint()`,
     jsonb: `zJson`,
@@ -881,6 +887,10 @@ function createTypesMap(customZodTypes: Record<string, string>) {
     _uuid: "z.string().uuid()",
     varchar: `z.string()`,
     interval: `z.number()`,
+    name: `z.string()`,
+    _name: `z.string()`,
+    char: `z.string().length(1)`,
+    _char: `z.string().length(1)`,
   };
   const map = { ...ZOD_TYPES_OVERRIDE, ...customZodTypes };
   const proxy = new Proxy(map, {
