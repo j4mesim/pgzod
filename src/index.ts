@@ -11,6 +11,9 @@ import { z } from "zod";
 import type { CreatePoolProps } from "./lib/createPool";
 import { createPool } from "./lib/createPool";
 
+const pascalCaseSafe = (s: string) =>
+  pascalCase(s) === "Symbol" ? "SymbolRow" : pascalCase(s);
+
 interface PgRelationship {
   con: number;
   conname: string;
@@ -123,7 +126,7 @@ const getPgColumns = async (schema: string, pool: DatabasePool) =>
   from pg_class r
   left join pg_namespace n on (r.relnamespace=n.oid)
   left join pg_attribute a on (r.oid=a.attrelid)
-  where nspname=${schema}
+	where nspname=${schema}
   order by nspname, relname, att;`
   );
 
@@ -559,7 +562,7 @@ async function runWithStrategies({
       template.push(`);\n`);
     }
 
-    const name = pascalCase(table_name);
+    const name = pascalCaseSafe(table_name);
     template.push(`export const z${name}RecordStrict = {`);
 
     for (const column of columnsIS) {
@@ -812,7 +815,7 @@ async function runWithStrategies({
     template.push(`  primary: ${name}Primary;`);
     template.push(`};`);
 
-    const file = camelCase(name);
+    const file = camelCase(table_name);
     await writeFile(join(output, `${file}.ts`), template.join("\n"));
 
     const indexImportTypes = indexImportsTypes.join(", ");
@@ -836,7 +839,7 @@ async function runWithStrategies({
 
   index.push(`export type TableTypes = {`);
   tables.forEach(({ table_name }) => {
-    index.push(`  ${table_name}: ${pascalCase(table_name)}Types,`);
+    index.push(`  ${table_name}: ${pascalCaseSafe(table_name)}Types,`);
   });
   index.push(`};`);
 
