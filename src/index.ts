@@ -859,16 +859,21 @@ function createTypesMap(customZodTypes: Record<string, string>) {
    */
   const ZOD_TYPES_OVERRIDE: Record<string, string> = {
     bool: `z.boolean()`,
+    _bool: `z.boolean()`,
     bpchar: `z.string()`,
     citext: `z.string()`,
     // TODO: Find a better way to handle dates.
     date: `z.string()`,
     float8: `z.number()`,
+    _float8: `z.number()`,
     int4: `z.number().int()`,
     int8: `z.bigint()`,
+    _int4: `z.number().int()`,
+    _int8: `z.bigint()`,
     jsonb: `zJson`,
     numeric: `z.number()`,
     text: `z.string()`,
+    _text: `z.string()`,
     // TODO: Find a better way to handle dates.
     timestamp: `z.date()`,
     timestamptz: `z.date()`,
