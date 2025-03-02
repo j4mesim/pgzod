@@ -892,6 +892,8 @@ function createTypesMap(customZodTypes: Record<string, string>) {
     _name: `z.string()`,
     char: `z.string().length(1)`,
     _char: `z.string().length(1)`,
+    bytea: `z.string()`,
+    _bytea: `z.string()`,
   };
   const map = { ...ZOD_TYPES_OVERRIDE, ...customZodTypes };
   const proxy = new Proxy(map, {
