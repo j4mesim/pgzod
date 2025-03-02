@@ -569,7 +569,8 @@ async function runWithStrategies({
       const name = column.column_name;
       let line = `${name}: `;
 
-      const type = typesMap[column.udt_name];
+      let type = typesMap[column.udt_name];
+      if (column.data_type === "ARRAY") type = `z.array(${type})`;
       line += type;
 
       template.push(`  ${line},`);
