@@ -27,9 +27,9 @@
     "clean": "rm -rf dist build package",
     "ts-node": "ts-node",
     "docs": "typedoc --entryPoints src/index.ts",
-    "prebuild": "bun clean",
+    "prebuild": "bun run clean",
     "build": "tsc -p tsconfig.json",
-    "prepublish": "bun build"
+    "prepublish": "bun run build"
   },
   "devDependencies": {
     "@types/cli-progress": "^3.9.2",
