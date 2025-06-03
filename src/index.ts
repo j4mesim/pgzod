@@ -379,7 +379,7 @@ export const builder: (args: Argv<Record<string, unknown>>) => Argv<Options> = (
       },
     })
     // Deactivate the use of environment variables for option configurations.
-    .env(true);
+    .env(true) as Argv<Options>;
 /**
  * Yargs default command handler function.
  * Defaults are duplicated to allow importing this function from another module.
